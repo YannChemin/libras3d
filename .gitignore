@@ -1,0 +1,35 @@
+# CMake build tree
+build/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+compile_commands.json
+
+# Compiled library artefacts (generated inside build/)
+*.a
+*.so
+*.so.*
+
+# Debian build artefacts (appear one level up from the source tree)
+debian/.debhelper/
+debian/tmp/
+debian/files
+debian/*.debhelper.log
+debian/*.substvars
+debian/debhelper-build-stamp
+debian/libras3d/
+debian/libras3d-dev/
+debian/libras3d-python/
+
+# Test binaries
+tests/test_geotiff
+tests/test_hdf5
+
+# Wavelength sidecar files generated at runtime
+*.wl.json
+
+# Python cache
+__pycache__/
+*.pyc
+.pytest_cache/

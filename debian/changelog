@@ -1,0 +1,12 @@
+ras3d (0.1.0-1) trixie; urgency=low
+
+  * Initial release.
+  * GeoTIFF backend: tiled/strip, contiguous/separate planar, any bit depth.
+  * HDF5 backend: auto-probe for radiance/reflectance datasets;
+    RAS3D_HDF5_DATASET override; geo-extent from Lat/Lon arrays.
+  * Drop-in GRASS API: Rast3d_*, G_*, Rast_*, G_parser emulation.
+  * OpenMP parallelism for compute; serial HDF5 I/O (thread-safety).
+  * Python ctypes wrapper (libras3d-python package).
+  * i.hyper.atcorr integration via HAVE_RAS3D compile-time guard.
+
+ -- Yann Chemin <dr.yann.chemin@gmail.com>  Fri, 09 May 2026 00:00:00 +0000

@@ -1,0 +1,4 @@
+usr/lib/*/libras3d.so
+usr/lib/*/libras3d.a
+usr/include/ras3d/
+usr/lib/*/pkgconfig/ras3d.pc

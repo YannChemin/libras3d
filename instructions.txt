@@ -1,0 +1,14 @@
+This is a place where we will recreate the GRASS GIS raster3d library as an independent library, able to import raster datasets from HDF and GeoTiff.
+
+GeoTiff using libgeotiff-dev.
+HDF using parallel versions of HDF using libpnetcdf-dev. 
+
+Input files to work with: $HOME/RSDATA/Wyvern_Dragonette_001_20240808_agri (geotiff) and /home/yann/RSDATA/Tanager/Kanpur (hdf)
+
+The library will be writtten in C+OpenMP with a python wrapper to allow i.hyper.* modules to operate on it. The i.hyper.* modules ($HOME/dev/i.hyper.*), GRASS GIS dev tree ($HOME/dev/grass). 
+
+Attention will be given to use api/function calls identical to those used in i.hyper.* modules, but only that, the underlying library will use C+OpenMP, will be very close to libgeotiff/libpnetcdf in operation, and try to maximise the request speed for example by organizing the data access in a way that can be parallel in access and write.
+
+output should be preferred in geotiff lzw compressed.
+
+i.hyper.* modules should have a starting point detecting if ras3d library is available to them to carry out processing outside of GRASS GIS environment, once loaded, the library should emulate all GRASS GIS configurations required in order to provide a -No Change Run As Is- functionality of the module.

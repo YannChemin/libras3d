@@ -1,0 +1,19 @@
+#!/usr/bin/make -f
+# SPDX-License-Identifier: GPL-2.0+
+
+export DH_VERBOSE = 0
+
+# Pass the soname version to cmake so the library gets a proper SONAME.
+# We also disable the test suite during the package build because the tests
+# rely on hard-coded data paths that may not exist on the build machine.
+%:
+	dh $@ --buildsystem=cmake
+
+override_dh_auto_configure:
+	dh_auto_configure -- \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DBUILD_TESTING=OFF
+
+override_dh_auto_test:
+	# Skip ctest — tests require local hyperspectral data files.
+	@echo "Skipping ctest (data-path dependent)."

@@ -1,0 +1,50 @@
+Source: ras3d
+Section: libs
+Priority: optional
+Maintainer: Yann Chemin <dr.yann.chemin@gmail.com>
+Build-Depends:
+ debhelper-compat (= 13),
+ cmake (>= 3.16),
+ libtiff-dev,
+ libgeotiff-dev,
+ libhdf5-dev,
+ libgomp1
+Standards-Version: 4.6.2
+Homepage: https://github.com/yannchemin/libras3d
+Rules-Requires-Root: no
+
+Package: libras3d
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Standalone GRASS raster3d replacement library (runtime)
+ ras3d reimplements the GRASS GIS raster3d API as a standalone shared
+ library that reads hyperspectral data cubes from multi-band GeoTIFF
+ and HDF-EOS5 (HDF5) files.  It provides drop-in replacements for
+ GRASS functions (Rast3d_*, G_*, Rast_*) so that i.hyper.* processing
+ modules can run outside GRASS without modification.
+ .
+ Reads are parallelised with OpenMP; output is always GeoTIFF with
+ LZW compression and 512x512 tiles.
+ .
+ This package contains the shared library (libras3d.so).
+
+Package: libras3d-dev
+Architecture: any
+Depends: libras3d (= ${binary:Version}), ${misc:Depends},
+ libtiff-dev, libgeotiff-dev, libhdf5-dev
+Description: Standalone GRASS raster3d replacement library (development)
+ ras3d reimplements the GRASS GIS raster3d API as a standalone shared
+ library that reads hyperspectral data cubes from multi-band GeoTIFF
+ and HDF-EOS5 (HDF5) files.
+ .
+ This package contains the C headers, static library, and pkg-config
+ file needed to build software against libras3d.
+
+Package: libras3d-python
+Architecture: all
+Depends: libras3d (>= ${source:Version}), python3, python3-numpy,
+ ${misc:Depends}
+Description: Python ctypes wrapper for libras3d
+ Provides open_cube(), get_band(), get_region(), and read_all_bands()
+ returning NumPy float32 arrays.  Loads libras3d.so at runtime via
+ ctypes; no compiled extension is required.
