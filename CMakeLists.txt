@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(ras3d VERSION 0.1.0 LANGUAGES C)
+project(ras3d VERSION 0.1.1 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -102,7 +102,7 @@ install(DIRECTORY include/ras3d DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/ras3d.pc
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig
 )
-install(FILES python/ras3d.py
+install(FILES python/ras3d.py python/ras3d_grass_shim.py python/ras3d_write.py
     DESTINATION ${CMAKE_INSTALL_PREFIX}/lib/python3/dist-packages
 )
 

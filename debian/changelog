@@ -1,3 +1,26 @@
+ras3d (0.1.1-1) trixie; urgency=low
+
+  * Add Python GRASS emulation layer (ras3d_grass_shim.py): drop-in
+    replacement for grass.script used by i.hyper.* modules; provides
+    gs.parser(), gs.raster3d_info(), gs.run_command() and all logging
+    functions without requiring a GRASS installation.
+  * Add GeoTIFF/3D output helpers (ras3d_write.py): write_raster2d(),
+    write_raster3d(), outpath() backed by GDAL for LZW-compressed output.
+  * Add test_ras3d_common.py: shared pytest fixtures and helpers for
+    i.hyper.* standalone test suites (open_cube_checked, assert_band_valid,
+    make_wl_sidecar, skip markers for data availability).
+  * libras3d-python: now ships all three Python modules.
+  * Fix pkg-config includedir (was /usr/ instead of /usr/include) by
+    moving include(GNUInstallDirs) before configure_file() in CMakeLists.
+  * Fix private lib in ras3d.pc: use hdf5_serial (Debian trixie name).
+  * Add missing GRASS API stubs: G__gisinit, G_add_keyword, G_get_window,
+    G_percent, G_debug, G_verbose_std, Rast3d_init_defaults,
+    Rast3d_min_unlocked, struct Cell_head, GPATH_MAX, M_PI.
+  * Correct Rast3d_open_new_opt_tile_size to actual 5-arg GRASS signature.
+  * i.hyper.atcorr: DEBIAN_BUILD=1 Makefile mode tested and confirmed.
+
+ -- Yann Chemin <dr.yann.chemin@gmail.com>  Sat, 10 May 2026 00:00:00 +0000
+
 ras3d (0.1.0-1) trixie; urgency=low
 
   * Initial release.

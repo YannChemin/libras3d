@@ -1,1 +1,3 @@
 usr/lib/python3/dist-packages/ras3d.py
+usr/lib/python3/dist-packages/ras3d_grass_shim.py
+usr/lib/python3/dist-packages/ras3d_write.py
