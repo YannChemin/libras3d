@@ -13,6 +13,7 @@
 #include <geotiff.h>
 #include <xtiffio.h>
 #include <geokeys.h>
+#include <geovalues.h>
 
 /* ras3d headers after geotiff — TYPE_DOUBLE macro (=2) now safe */
 #include "ras3d/ras3d.h"
@@ -35,6 +36,7 @@ typedef struct {
     double origin_x, origin_y;
     double pixel_x,  pixel_y;
     int    epsg;
+    int    geographic;     /* 1 = lat/lon CRS, 0 = projected */
     int    is_tiled;       /* 1 = use TIFFReadTile, 0 = TIFFReadScanline */
     int    planar_contig;  /* 1 = PLANARCONFIG_CONTIG, 0 = SEPARATE */
     uint32_t tile_w, tile_h;
@@ -266,22 +268,20 @@ static int geotiff_write_close(void *ctx)
     TIFFSetField(g->tif, TIFFTAG_COMPRESSION,     COMPRESSION_LZW);
     TIFFSetField(g->tif, TIFFTAG_PREDICTOR,       PREDICTOR_FLOATINGPOINT);
     TIFFSetField(g->tif, TIFFTAG_PHOTOMETRIC,     PHOTOMETRIC_MINISBLACK);
+    if (bands > 1) {
+        /* Greyscale has one colour channel; declare the other bands. */
+        uint16_t *extra = G_malloc((size_t)(bands - 1) * sizeof(uint16_t));
+        for (int b = 0; b < bands - 1; b++)
+            extra[b] = EXTRASAMPLE_UNSPECIFIED;
+        TIFFSetField(g->tif, TIFFTAG_EXTRASAMPLES, (uint16_t)(bands - 1), extra);
+        G_free(extra);
+    }
     uint32_t tile = 512;
     TIFFSetField(g->tif, TIFFTAG_TILEWIDTH,  tile);
     TIFFSetField(g->tif, TIFFTAG_TILELENGTH, tile);
 
-    /* Geo-tags */
-    if (g->pixel_x > 0.0 || g->pixel_y > 0.0) {
-        double scale[3] = { g->pixel_x, g->pixel_y, 0.0 };
-        double tie[6]   = { 0.0, 0.0, 0.0, g->origin_x, g->origin_y, 0.0 };
-        TIFFSetField(g->tif, TIFFTAG_GEOPIXELSCALE, 3, scale);
-        TIFFSetField(g->tif, TIFFTAG_GEOTIEPOINTS,  6, tie);
-        if (g->gtif && g->epsg) {
-            GTIFKeySet(g->gtif, GTModelTypeGeoKey,     TYPE_SHORT, 1, (short)1);
-            GTIFKeySet(g->gtif, ProjectedCSTypeGeoKey, TYPE_SHORT, 1, (short)g->epsg);
-            GTIFWriteKeys(g->gtif);
-        }
-    }
+    ras3d_geotiff_set_georef(g->tif, g->gtif, g->origin_x, g->origin_y,
+                             g->pixel_x, g->pixel_y, g->epsg, g->geographic);
 
     /* Write tiles — band-by-band (PLANARCONFIG_SEPARATE) */
     tmsize_t tile_bytes = (tmsize_t)tile * tile * sizeof(float);
@@ -310,6 +310,56 @@ static int geotiff_write_close(void *ctx)
     free(g->path);
     free(g);
     return 1;
+}
+
+/* ── georeferencing ───────────────────────────────────────────────────────── */
+
+void ras3d_geotiff_set_georef(void *tif_, void *gtif_, double west,
+                              double north, double ew_res, double ns_res,
+                              int epsg, int geographic)
+{
+    TIFF *tif = tif_;
+    GTIF *gtif = gtif_;
+
+    if (!(ew_res > 0.0 && ns_res > 0.0))
+        return;
+    double scale[3] = { ew_res, ns_res, 0.0 };
+    double tie[6]   = { 0.0, 0.0, 0.0, west, north, 0.0 };
+    TIFFSetField(tif, TIFFTAG_GEOPIXELSCALE, 3, scale);
+    TIFFSetField(tif, TIFFTAG_GEOTIEPOINTS,  6, tie);
+    if (!gtif)
+        return;
+    GTIFKeySet(gtif, GTRasterTypeGeoKey, TYPE_SHORT, 1, RasterPixelIsArea);
+    if (epsg > 0) {
+        GTIFKeySet(gtif, GTModelTypeGeoKey, TYPE_SHORT, 1,
+                   geographic ? ModelTypeGeographic : ModelTypeProjected);
+        GTIFKeySet(gtif, geographic ? GeographicTypeGeoKey
+                                    : ProjectedCSTypeGeoKey,
+                   TYPE_SHORT, 1, epsg);
+    }
+    GTIFWriteKeys(gtif);
+}
+
+/* Read the EPSG code and model type of a GeoTIFF; *epsg = 0 when the CRS
+ * is missing or user-defined. */
+static void read_crs(GTIF *gtif, int *epsg, int *geographic)
+{
+    unsigned short model = 0, code = 0;
+
+    *epsg = 0;
+    *geographic = 0;
+    if (!gtif || !GTIFKeyGet(gtif, GTModelTypeGeoKey, &model, 0, 1))
+        return;
+    if (model == ModelTypeGeographic &&
+        GTIFKeyGet(gtif, GeographicTypeGeoKey, &code, 0, 1)) {
+        *geographic = 1;
+    }
+    else if (model != ModelTypeProjected ||
+             !GTIFKeyGet(gtif, ProjectedCSTypeGeoKey, &code, 0, 1)) {
+        return;
+    }
+    if (code != KvUserDefined)
+        *epsg = code;
 }
 
 /* ── public constructors ──────────────────────────────────────────────────── */
@@ -370,6 +420,9 @@ int ras3d_open_geotiff_read(const char *path, RASTER3D_Map *map)
     g->spp     = spp;
     g->is_tiled     = is_tiled;
     g->planar_contig = (planar == PLANARCONFIG_CONTIG);
+    read_crs(gtif, &g->epsg, &g->geographic);
+    ras3d_current_epsg = g->epsg;
+    ras3d_current_geographic = g->geographic;
     if (is_tiled) {
         TIFFGetField(tif, TIFFTAG_TILEWIDTH,  &g->tile_w);
         TIFFGetField(tif, TIFFTAG_TILELENGTH, &g->tile_h);
@@ -408,6 +461,8 @@ int ras3d_open_geotiff_write(const char *path, RASTER3D_Map *map,
     g->origin_y = map->region.north;
     g->pixel_x  = map->region.ew_res;
     g->pixel_y  = map->region.ns_res;
+    g->epsg       = ras3d_current_epsg;
+    g->geographic = ras3d_current_geographic;
     size_t plen = strlen(path) + 1;
     g->path = malloc(plen); memcpy(g->path, path, plen);
 

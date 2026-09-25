@@ -43,6 +43,8 @@ int            ras3d_nflags = 0;
 /* ── Global window state ──────────────────────────────────────────────────── */
 RASTER3D_Region ras3d_current_window;
 int             ras3d_window_valid = 0;
+int             ras3d_current_epsg = 0;
+int             ras3d_current_geographic = 0;
 
 /* ── memory ───────────────────────────────────────────────────────────────── */
 void *G_malloc(size_t size)
@@ -552,11 +554,26 @@ static void setup_write_tags(struct rast2d_handle *h, int ncols)
     if (h->ncols) return;
     h->ncols = ncols;
     TIFFSetField(h->tif, TIFFTAG_IMAGEWIDTH,        (uint32_t)ncols);
+    if (ras3d_window_valid)
+        TIFFSetField(h->tif, TIFFTAG_IMAGELENGTH,
+                     (uint32_t)ras3d_current_window.rows);
     TIFFSetField(h->tif, TIFFTAG_PLANARCONFIG,      PLANARCONFIG_CONTIG);
     TIFFSetField(h->tif, TIFFTAG_SAMPLESPERPIXEL,   (uint16_t)1);
+    TIFFSetField(h->tif, TIFFTAG_PHOTOMETRIC,       PHOTOMETRIC_MINISBLACK);
     TIFFSetField(h->tif, TIFFTAG_ROWSPERSTRIP,      (uint32_t)1);
     TIFFSetField(h->tif, TIFFTAG_COMPRESSION,       COMPRESSION_LZW);
-    TIFFSetField(h->tif, TIFFTAG_PREDICTOR,         PREDICTOR_FLOATINGPOINT);
+    /* The floating-point predictor is only defined for IEEE samples;
+     * libtiff rejects it for integers and the strips come out empty. */
+    TIFFSetField(h->tif, TIFFTAG_PREDICTOR,
+                 h->type == CELL_TYPE ? PREDICTOR_HORIZONTAL
+                                      : PREDICTOR_FLOATINGPOINT);
+    if (ras3d_window_valid)
+        ras3d_geotiff_set_georef(h->tif, h->gtif, ras3d_current_window.west,
+                                 ras3d_current_window.north,
+                                 ras3d_current_window.ew_res,
+                                 ras3d_current_window.ns_res,
+                                 ras3d_current_epsg,
+                                 ras3d_current_geographic);
     if (h->type == CELL_TYPE) {
         TIFFSetField(h->tif, TIFFTAG_BITSPERSAMPLE, (uint16_t)32);
         TIFFSetField(h->tif, TIFFTAG_SAMPLEFORMAT,  SAMPLEFORMAT_INT);

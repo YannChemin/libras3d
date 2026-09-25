@@ -1,0 +1,11 @@
+prefix=/usr
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib/x86_64-linux-gnu
+includedir=${prefix}/include
+
+Name: ras3d
+Description: Standalone GRASS raster3d replacement for hyperspectral GeoTIFF/HDF5
+Version: 0.1.2
+Cflags: -I${includedir} -DHAVE_RAS3D
+Libs: -L${libdir} -lras3d
+Libs.private: -lgeotiff -ltiff -lhdf5_serial -lm -fopenmp

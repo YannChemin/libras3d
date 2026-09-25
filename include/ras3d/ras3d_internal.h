@@ -69,6 +69,11 @@ extern int            ras3d_nflags;
 extern RASTER3D_Region ras3d_current_window;
 extern int             ras3d_window_valid;
 
+/* CRS of the most recently opened input map, reused when writing outputs:
+ * EPSG code (0 = unknown) and whether it is geographic (lat/lon). */
+extern int             ras3d_current_epsg;
+extern int             ras3d_current_geographic;
+
 /* ── Internal helpers ────────────────────────────────────────────────────── */
 RASTER3D_Map *ras3d_map_alloc(void);
 void          ras3d_map_free(RASTER3D_Map *map);
@@ -79,5 +84,12 @@ int  ras3d_open_geotiff_write(const char *path, RASTER3D_Map *map,
                               int tile_x, int tile_y,
                               int compression, int precision);
 int  ras3d_open_hdf5_read(const char *path, RASTER3D_Map *map);
+
+/* Write tie point, pixel scale and GeoKeys to a TIFF being written.
+ * tif/gtif are TIFF * / GTIF * (void here to keep libtiff out of this
+ * header). Does nothing when the pixel size is unknown. */
+void ras3d_geotiff_set_georef(void *tif, void *gtif, double west,
+                              double north, double ew_res, double ns_res,
+                              int epsg, int geographic);
 
 #endif /* RAS3D_INTERNAL_H */

@@ -203,6 +203,8 @@ static void compute_geo_from_latlon(hid_t file_id, const char *dset_path,
         ctx->east   = (double)ncols;
         ctx->ns_res = 1.0;
         ctx->ew_res = 1.0;
+        ras3d_current_epsg = 0;
+        ras3d_current_geographic = 0;
         if (lat_dset != H5I_INVALID_HID) H5Dclose(lat_dset);
         if (lon_dset != H5I_INVALID_HID) H5Dclose(lon_dset);
         return;
@@ -240,6 +242,9 @@ static void compute_geo_from_latlon(hid_t file_id, const char *dset_path,
     ctx->east   = lon_e;
     ctx->ns_res = (lat_n - lat_s) / (double)nrows;
     ctx->ew_res = (lon_e - lon_w) / (double)ncols;
+    /* Extent taken from Lat/Lon arrays: WGS84 geographic. */
+    ras3d_current_epsg = 4326;
+    ras3d_current_geographic = 1;
 }
 
 /* ── read backend ─────────────────────────────────────────────────────────── */

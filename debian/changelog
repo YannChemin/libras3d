@@ -1,3 +1,22 @@
+ras3d (0.1.2-1) trixie; urgency=medium
+
+  * Fix 2-D GeoTIFF output (Rast_open_new + Rast_put_*_row): CELL rasters
+    were written with the floating-point predictor, which libtiff rejects
+    for integer samples, leaving empty strips (all-zero rasters). Use the
+    horizontal predictor for integers; also set ImageLength and
+    PhotometricInterpretation.
+  * Georeference 2-D outputs from the current window: tie point, pixel
+    scale and GeoKeys were never written.
+  * Read the CRS (EPSG, geographic or projected) of GeoTIFF inputs and
+    reuse it for 2-D and 3-D outputs; HDF5 inputs georeferenced from
+    Lat/Lon arrays are tagged EPSG:4326. The 3-D writer previously never
+    wrote a CRS and always declared a projected model.
+  * Declare ExtraSamples on multi-band 3-D GeoTIFF outputs.
+  * Add tests/test_write_georef.c, a self-contained test of values and
+    georeferencing for CELL, FCELL and 3-D outputs (UTM and WGS84).
+
+ -- Yann Chemin <dr.yann.chemin@gmail.com>  Fri, 25 Sep 2026 17:29:03 +0200
+
 ras3d (0.1.1-1) trixie; urgency=low
 
   * Add Python GRASS emulation layer (ras3d_grass_shim.py): drop-in

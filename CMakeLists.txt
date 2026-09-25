@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(ras3d VERSION 0.1.1 LANGUAGES C)
+project(ras3d VERSION 0.1.2 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -83,6 +83,17 @@ if(BUILD_TESTING)
         add_test(NAME ${test_name} COMMAND ${test_name})
     endforeach()
 endif()
+
+# Self-contained tests (no external data): always built.
+enable_testing()
+add_executable(test_write_georef tests/test_write_georef.c)
+target_include_directories(test_write_georef PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${GEOTIFF_INCLUDE_DIR}
+)
+target_link_libraries(test_write_georef PRIVATE ras3d_static TIFF::TIFF
+    ${GEOTIFF_LIBRARY} ${MATH_LIB})
+add_test(NAME test_write_georef COMMAND test_write_georef)
 
 # ── install ────────────────────────────────────────────────────────────────
 include(GNUInstallDirs)   # must come before configure_file so includedir is set
