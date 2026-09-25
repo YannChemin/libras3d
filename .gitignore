@@ -12,6 +12,8 @@ compile_commands.json
 *.so.*
 
 # Debian build artefacts (appear one level up from the source tree)
+# dh_auto_configure's per-architecture CMake build directory
+obj-*/
 debian/.debhelper/
 debian/tmp/
 debian/files
