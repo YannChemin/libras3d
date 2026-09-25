@@ -98,38 +98,69 @@ static inline double sample_to_double(const void *ptr, uint16_t sf, uint16_t bps
 /* ── read backend ─────────────────────────────────────────────────────────── */
 
 /*
- * Read one z-slice (band z0) from a tiled contiguous TIFF.
- * Layout: each tile stores spp values per pixel, interleaved [b0,b1,...,bN].
+ * Block reads. The requested window [x0, x0+nx) x [y0, y0+ny) x
+ * [z0, z0+nz) is written to out[(dz * ny + row) * nx + col]; cells outside
+ * the image stay NaN (null). Each tile or scanline is decoded once and all
+ * requested bands are scattered from it: with pixel-interleaved (contiguous)
+ * data every tile holds all bands, so decoding it once per band would cost
+ * nbands times the whole file.
  */
-static void read_band_tiled_contig(geotiff_ctx_t *g, int band, DCELL *out)
+struct window {
+    int x0, y0, z0, nx, ny, nz;
+};
+
+static inline DCELL *win_cell(DCELL *out, const struct window *w, int dz,
+                              int row, int col)
 {
-    int cols = g->ncols, rows = g->nrows;
-    int spp  = (int)g->spp;
+    return out + ((size_t)dz * w->ny + (size_t)(row - w->y0)) * w->nx +
+           (col - w->x0);
+}
+
+static void read_tiled(geotiff_ctx_t *g, const struct window *w, DCELL *out)
+{
     int bps_bytes = (int)(g->bps / 8);
+    int spp = (int)g->spp;
     uint32_t tw = g->tile_w, th = g->tile_h;
-    size_t tile_bytes = (size_t)TIFFTileSize(g->tif);
+    int xe = w->x0 + w->nx < g->ncols ? w->x0 + w->nx : g->ncols;
+    int ye = w->y0 + w->ny < g->nrows ? w->y0 + w->ny : g->nrows;
+    int xs = w->x0 > 0 ? w->x0 : 0, ys = w->y0 > 0 ? w->y0 : 0;
+    void *tile_buf = malloc((size_t)TIFFTileSize(g->tif));
 
-    /* Decompose into tiles and process each tile serially (libtiff is not
-     * thread-safe for concurrent reads on the same TIFF handle).
-     * OpenMP is applied at the caller (band) level. */
-    void *tile_buf = malloc(tile_bytes);
-    if (!tile_buf) { G_warning("read_band_tiled_contig: malloc failed"); return; }
+    if (!tile_buf) {
+        G_warning("ras3d: tile buffer allocation failed");
+        return;
+    }
+    for (uint32_t ty = (uint32_t)ys / th * th; ty < (uint32_t)ye; ty += th) {
+        for (uint32_t tx = (uint32_t)xs / tw * tw; tx < (uint32_t)xe; tx += tw) {
+            int r0 = (int)ty > ys ? (int)ty : ys;
+            int r1 = (int)(ty + th) < ye ? (int)(ty + th) : ye;
+            int c0 = (int)tx > xs ? (int)tx : xs;
+            int c1 = (int)(tx + tw) < xe ? (int)(tx + tw) : xe;
 
-    for (uint32_t ty = 0; ty < (uint32_t)rows; ty += th) {
-        for (uint32_t tx = 0; tx < (uint32_t)cols; tx += tw) {
-            TIFFReadTile(g->tif, tile_buf, tx, ty, 0, 0);
-
-            uint32_t actual_h = ((uint32_t)rows - ty < th) ? ((uint32_t)rows - ty) : th;
-            uint32_t actual_w = ((uint32_t)cols - tx < tw) ? ((uint32_t)cols - tx) : tw;
-
-            for (uint32_t r = 0; r < actual_h; r++) {
-                for (uint32_t c = 0; c < actual_w; c++) {
-                    /* In contig tile: pixel layout is [spp samples per pixel] */
-                    const void *ptr = (const char *)tile_buf
-                                    + ((size_t)r * tw + c) * spp * bps_bytes
-                                    + band * bps_bytes;
-                    out[(ty + r) * (uint32_t)cols + (tx + c)] =
-                        sample_to_double(ptr, g->sf, g->bps);
+            if (g->planar_contig) {
+                TIFFReadTile(g->tif, tile_buf, tx, ty, 0, 0);
+                for (int r = r0; r < r1; r++)
+                    for (int c = c0; c < c1; c++) {
+                        const char *px = (const char *)tile_buf +
+                                         ((size_t)(r - ty) * tw + (c - tx)) *
+                                             spp * bps_bytes;
+                        for (int dz = 0; dz < w->nz; dz++)
+                            *win_cell(out, w, dz, r, c) = sample_to_double(
+                                px + (size_t)(w->z0 + dz) * bps_bytes, g->sf,
+                                g->bps);
+                    }
+            }
+            else {
+                for (int dz = 0; dz < w->nz; dz++) {
+                    TIFFReadTile(g->tif, tile_buf, tx, ty, 0,
+                                 (uint16_t)(w->z0 + dz));
+                    for (int r = r0; r < r1; r++)
+                        for (int c = c0; c < c1; c++)
+                            *win_cell(out, w, dz, r, c) = sample_to_double(
+                                (const char *)tile_buf +
+                                    ((size_t)(r - ty) * tw + (c - tx)) *
+                                        bps_bytes,
+                                g->sf, g->bps);
                 }
             }
         }
@@ -137,63 +168,44 @@ static void read_band_tiled_contig(geotiff_ctx_t *g, int band, DCELL *out)
     free(tile_buf);
 }
 
-/*
- * Read one band from a tiled SEPARATE TIFF (each band in its own plane).
- */
-static void read_band_tiled_separate(geotiff_ctx_t *g, int band, DCELL *out)
+static void read_scanlines(geotiff_ctx_t *g, const struct window *w,
+                           DCELL *out)
 {
-    int cols = g->ncols, rows = g->nrows;
     int bps_bytes = (int)(g->bps / 8);
-    uint32_t tw = g->tile_w, th = g->tile_h;
-    size_t tile_bytes = (size_t)TIFFTileSize(g->tif);
+    int spp = (int)g->spp;
+    int xe = w->x0 + w->nx < g->ncols ? w->x0 + w->nx : g->ncols;
+    int ye = w->y0 + w->ny < g->nrows ? w->y0 + w->ny : g->nrows;
+    int xs = w->x0 > 0 ? w->x0 : 0, ys = w->y0 > 0 ? w->y0 : 0;
+    void *row_buf = malloc((size_t)TIFFScanlineSize(g->tif));
 
-    void *tile_buf = malloc(tile_bytes);
-    if (!tile_buf) { G_warning("read_band_tiled_separate: malloc failed"); return; }
-
-    for (uint32_t ty = 0; ty < (uint32_t)rows; ty += th) {
-        for (uint32_t tx = 0; tx < (uint32_t)cols; tx += tw) {
-            TIFFReadTile(g->tif, tile_buf, tx, ty, 0, (uint16_t)band);
-
-            uint32_t actual_h = ((uint32_t)rows - ty < th) ? ((uint32_t)rows - ty) : th;
-            uint32_t actual_w = ((uint32_t)cols - tx < tw) ? ((uint32_t)cols - tx) : tw;
-
-            for (uint32_t r = 0; r < actual_h; r++) {
-                for (uint32_t c = 0; c < actual_w; c++) {
-                    const void *ptr = (const char *)tile_buf
-                                    + ((size_t)r * tw + c) * bps_bytes;
-                    out[(ty + r) * (uint32_t)cols + (tx + c)] =
-                        sample_to_double(ptr, g->sf, g->bps);
-                }
+    if (!row_buf) {
+        G_warning("ras3d: scanline buffer allocation failed");
+        return;
+    }
+    if (g->planar_contig) {
+        for (int r = ys; r < ye; r++) {
+            TIFFReadScanline(g->tif, row_buf, (uint32_t)r, 0);
+            for (int c = xs; c < xe; c++) {
+                const char *px =
+                    (const char *)row_buf + (size_t)c * spp * bps_bytes;
+                for (int dz = 0; dz < w->nz; dz++)
+                    *win_cell(out, w, dz, r, c) = sample_to_double(
+                        px + (size_t)(w->z0 + dz) * bps_bytes, g->sf, g->bps);
             }
         }
     }
-    free(tile_buf);
-}
-
-/*
- * Read one band from a scanline TIFF (strip or plain scanline).
- * Works for both CONTIG and SEPARATE planar configs.
- */
-static void read_band_scanline(geotiff_ctx_t *g, int band, DCELL *out)
-{
-    int cols = g->ncols, rows = g->nrows;
-    int spp  = (int)g->spp;
-    int bps_bytes = (int)(g->bps / 8);
-    tmsize_t row_bytes = TIFFScanlineSize(g->tif);
-    void *row_buf = malloc((size_t)row_bytes);
-    if (!row_buf) { G_warning("read_band_scanline: malloc failed"); return; }
-
-    for (int r = 0; r < rows; r++) {
-        uint16_t sample = g->planar_contig ? 0 : (uint16_t)band;
-        TIFFReadScanline(g->tif, row_buf, (uint32_t)r, sample);
-        for (int c = 0; c < cols; c++) {
-            const void *ptr;
-            if (g->planar_contig)
-                ptr = (const char *)row_buf + ((size_t)c * spp + band) * bps_bytes;
-            else
-                ptr = (const char *)row_buf + (size_t)c * bps_bytes;
-            out[(size_t)r * cols + c] = sample_to_double(ptr, g->sf, g->bps);
-        }
+    else {
+        /* Separate planes are stored one after another: read plane by
+         * plane, rows in order. */
+        for (int dz = 0; dz < w->nz; dz++)
+            for (int r = ys; r < ye; r++) {
+                TIFFReadScanline(g->tif, row_buf, (uint32_t)r,
+                                 (uint16_t)(w->z0 + dz));
+                for (int c = xs; c < xe; c++)
+                    *win_cell(out, w, dz, r, c) = sample_to_double(
+                        (const char *)row_buf + (size_t)c * bps_bytes, g->sf,
+                        g->bps);
+            }
     }
     free(row_buf);
 }
@@ -203,32 +215,29 @@ static int geotiff_read_block(void *ctx,
                               int nx, int ny, int nz,
                               void *buf, int type)
 {
-    (void)x0; (void)y0;
     geotiff_ctx_t *g = ctx;
-    int npix = nx * ny;
-    DCELL *dcell_tmp = G_malloc((size_t)npix * nz * sizeof(DCELL));
+    struct window w = {x0, y0, z0, nx, ny, nz};
+    size_t ntotal = (size_t)nx * ny * nz;
+    DCELL *dcell_tmp = G_malloc(ntotal * sizeof(DCELL));
 
-    for (int dz = 0; dz < nz; dz++) {
-        int band = z0 + dz;
-        DCELL *dst = dcell_tmp + (size_t)dz * npix;
-
-        if (g->is_tiled) {
-            if (g->planar_contig)
-                read_band_tiled_contig(g, band, dst);
-            else
-                read_band_tiled_separate(g, band, dst);
-        } else {
-            read_band_scanline(g, band, dst);
-        }
+    for (size_t i = 0; i < ntotal; i++)
+        dcell_tmp[i] = NAN;
+    /* Bands beyond the cube stay null. */
+    if (w.z0 + w.nz > g->nbands)
+        w.nz = g->nbands - w.z0 > 0 ? g->nbands - w.z0 : 0;
+    if (w.nz > 0) {
+        if (g->is_tiled)
+            read_tiled(g, &w, dcell_tmp);
+        else
+            read_scanlines(g, &w, dcell_tmp);
     }
 
     if (type == DCELL_TYPE) {
-        memcpy(buf, dcell_tmp, (size_t)npix * nz * sizeof(DCELL));
+        memcpy(buf, dcell_tmp, ntotal * sizeof(DCELL));
     } else {
         float *fbuf = buf;
-        int ntotal = npix * nz;
 #pragma omp parallel for simd schedule(static)
-        for (int i = 0; i < ntotal; i++) fbuf[i] = (float)dcell_tmp[i];
+        for (size_t i = 0; i < ntotal; i++) fbuf[i] = (float)dcell_tmp[i];
     }
     G_free(dcell_tmp);
     return 1;
@@ -383,24 +392,11 @@ int ras3d_open_geotiff_read(const char *path, RASTER3D_Map *map)
 
     int is_tiled = TIFFIsTiled(tif);
 
-    int nbands;
-    if (planar == PLANARCONFIG_CONTIG) {
-        /* All bands in one IFD, interleaved: nbands = spp */
-        nbands = (int)spp;
-    } else {
-        /* Separate planes: count non-overview IFDs */
-        nbands = 0;
-        tdir_t d = 0;
-        do {
-            uint32_t subtype = 0;
-            TIFFGetFieldDefaulted(tif, TIFFTAG_SUBFILETYPE, &subtype);
-            if (!(subtype & 0x1)) /* not a reduced-resolution image */
-                nbands++;
-            d++;
-        } while (TIFFReadDirectory(tif));
-        if (nbands == 0) nbands = 1;
-        TIFFSetDirectory(tif, 0);
-    }
+    /* Bands are samples of the first directory in both layouts:
+     * interleaved per pixel (contiguous) or stored as separate planes of
+     * the same image (PLANARCONFIG_SEPARATE, e.g. GDAL INTERLEAVE=BAND and
+     * ras3d's own 3-D writer). Further directories are overviews. */
+    int nbands = spp > 0 ? (int)spp : 1;
 
     fill_region(tif, &map->region, nbands);
     map->window     = map->region;

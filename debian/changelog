@@ -1,3 +1,22 @@
+ras3d (0.1.3-1) trixie; urgency=medium
+
+  * Read band-separate GeoTIFFs (PlanarConfiguration=Separate with
+    SamplesPerPixel=N in one directory, e.g. GDAL INTERLEAVE=BAND and
+    ras3d's own 3-D output): the band count was taken from the number of
+    directories, so such files opened as a single band.
+  * Rewrite the GeoTIFF block reader: honour the requested x0/y0 window
+    (it was ignored and full-width rows were written into the caller's
+    buffer, overflowing it for any sub-window), leave cells outside the
+    image null, and decode each tile or scanline once per call, scattering
+    all requested bands. Pixel-interleaved files were decoded once per
+    band (nbands times the file per read); a 1001x1001x255 cube now reads
+    in about 1 s instead of 25 s.
+  * test_write_georef: read the 3-D output back through ras3d and check
+    multi-band sub-window reads, including cells beyond the image edge,
+    on strip and tiled inputs.
+
+ -- Yann Chemin <dr.yann.chemin@gmail.com>  Fri, 25 Sep 2026 19:52:59 +0200
+
 ras3d (0.1.2-1) trixie; urgency=medium
 
   * Fix 2-D GeoTIFF output (Rast_open_new + Rast_put_*_row): CELL rasters

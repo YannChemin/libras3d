@@ -38,7 +38,7 @@ static int failures = 0;
     } while (0)
 
 static void write_input(const char *path, int epsg, int geographic,
-                        double west, double north, double res)
+                        double west, double north, double res, int tiled)
 {
     TIFF *tif = XTIFFOpen(path, "w");
     GTIF *gtif = GTIFNew(tif);
@@ -59,7 +59,12 @@ static void write_input(const char *path, int epsg, int geographic,
 
         TIFFSetField(tif, TIFFTAG_EXTRASAMPLES, (uint16_t)(BANDS - 1), extra);
     }
-    TIFFSetField(tif, TIFFTAG_ROWSPERSTRIP, (uint32_t)1);
+    if (tiled) {
+        TIFFSetField(tif, TIFFTAG_TILEWIDTH, (uint32_t)16);
+        TIFFSetField(tif, TIFFTAG_TILELENGTH, (uint32_t)16);
+    }
+    else
+        TIFFSetField(tif, TIFFTAG_ROWSPERSTRIP, (uint32_t)1);
     TIFFSetField(tif, TIFFTAG_GEOPIXELSCALE, 3, scale);
     TIFFSetField(tif, TIFFTAG_GEOTIEPOINTS, 6, tie);
     GTIFKeySet(gtif, GTModelTypeGeoKey, TYPE_SHORT, 1,
@@ -68,11 +73,24 @@ static void write_input(const char *path, int epsg, int geographic,
     GTIFKeySet(gtif, geographic ? GeographicTypeGeoKey : ProjectedCSTypeGeoKey,
                TYPE_SHORT, 1, epsg);
     GTIFWriteKeys(gtif);
-    for (int r = 0; r < ROWS; r++) {
-        for (int c = 0; c < COLS; c++)
-            for (int b = 0; b < BANDS; b++)
-                row[c * BANDS + b] = (float)(100 * b + 10 * r + c);
-        TIFFWriteScanline(tif, row, (uint32_t)r, 0);
+    if (tiled) {
+        float tile[16 * 16 * BANDS];
+
+        memset(tile, 0, sizeof(tile));
+        for (int r = 0; r < ROWS; r++)
+            for (int c = 0; c < COLS; c++)
+                for (int b = 0; b < BANDS; b++)
+                    tile[(r * 16 + c) * BANDS + b] =
+                        (float)(100 * b + 10 * r + c);
+        TIFFWriteTile(tif, tile, 0, 0, 0, 0);
+    }
+    else {
+        for (int r = 0; r < ROWS; r++) {
+            for (int c = 0; c < COLS; c++)
+                for (int b = 0; b < BANDS; b++)
+                    row[c * BANDS + b] = (float)(100 * b + 10 * r + c);
+            TIFFWriteScanline(tif, row, (uint32_t)r, 0);
+        }
     }
     GTIFFree(gtif);
     XTIFFClose(tif);
@@ -151,8 +169,32 @@ static void check_fcell_values(const char *path)
     XTIFFClose(tif);
 }
 
+/* Multi-band sub-window reads, including cells beyond the image edge,
+ * which must come back null (NaN). */
+static void check_block_reads(RASTER3D_Map *map, const char *tag)
+{
+    enum { X0 = 2, Y0 = 3, Z0 = 1, NX = 3, NY = 3, NZ = 2 };
+    float blk[NZ * NY * NX];
+
+    Rast3d_get_block(map, X0, Y0, Z0, NX, NY, NZ, blk, FCELL_TYPE);
+    for (int dz = 0; dz < NZ; dz++)
+        for (int dy = 0; dy < NY; dy++)
+            for (int dx = 0; dx < NX; dx++) {
+                int b = Z0 + dz, r = Y0 + dy, c = X0 + dx;
+                float v = blk[(dz * NY + dy) * NX + dx];
+
+                if (r < ROWS && c < COLS)
+                    CHECK(v == (float)(100 * b + 10 * r + c),
+                          "%s block (%d,%d,%d) = %g", tag, b, r, c, v);
+                else
+                    CHECK(isnan(v), "%s block (%d,%d,%d) outside = %g", tag,
+                          b, r, c, v);
+            }
+}
+
 static void run_case(const char *dir, const char *tag, int epsg,
-                     int geographic, double west, double north, double res)
+                     int geographic, double west, double north, double res,
+                     int tiled)
 {
     char in[1024], out[1024];
     RASTER3D_Region region;
@@ -162,7 +204,7 @@ static void run_case(const char *dir, const char *tag, int epsg,
     int fd;
 
     snprintf(in, sizeof(in), "%s/in_%s.tif", dir, tag);
-    write_input(in, epsg, geographic, west, north, res);
+    write_input(in, epsg, geographic, west, north, res, tiled);
 
     Rast3d_get_window(&region);
     map = Rast3d_open_cell_old(in, G_find_raster3d(in, ""), &region,
@@ -171,6 +213,7 @@ static void run_case(const char *dir, const char *tag, int epsg,
     if (!map)
         return;
     Rast3d_get_region_struct_map(map, &region);
+    check_block_reads(map, tag);
 
     snprintf(out, sizeof(out), "cell_%s", tag);
     fd = Rast_open_new(out, CELL_TYPE);
@@ -210,6 +253,34 @@ static void run_case(const char *dir, const char *tag, int epsg,
                     Rast3d_put_float(map, c, r, z, (float)(z + r + c));
         Rast3d_close(map);
         check_georef(out, epsg, geographic, west, north, res);
+
+        /* ras3d must read its own 3-D output back (band-separate planes
+         * in one directory). */
+        RASTER3D_Region back;
+        Rast3d_get_window(&back);
+        map = Rast3d_open_cell_old(out, G_find_raster3d(out, ""), &back,
+                                   RASTER3D_TILE_SAME_AS_FILE,
+                                   RASTER3D_NO_CACHE);
+        CHECK(map != NULL, "cannot reopen <%s>", out);
+        if (map) {
+            float *blk;
+
+            Rast3d_get_region_struct_map(map, &back);
+            CHECK(back.depths == BANDS && back.rows == ROWS &&
+                      back.cols == COLS,
+                  "<%s> reads back as %dx%dx%d", out, back.depths, back.rows,
+                  back.cols);
+            blk = malloc(sizeof(float) * BANDS * ROWS * COLS);
+            Rast3d_get_block(map, 0, 0, 0, COLS, ROWS, BANDS, blk, FCELL_TYPE);
+            for (int z = 0; z < BANDS; z++)
+                for (int r = 0; r < ROWS; r++)
+                    for (int c = 0; c < COLS; c++)
+                        CHECK(blk[(z * ROWS + r) * COLS + c] == (float)(z + r + c),
+                              "<%s> voxel (%d,%d,%d) = %g", out, z, r, c,
+                              blk[(z * ROWS + r) * COLS + c]);
+            free(blk);
+            Rast3d_close(map);
+        }
     }
 }
 
@@ -224,8 +295,8 @@ int main(void)
     setenv("RAS3D_OUTDIR", dir, 1);
     setenv("RAS3D_VERBOSE", "0", 1);
 
-    run_case(dir, "utm", 32636, 0, 500000.0, 5260000.0, 60.0);
-    run_case(dir, "wgs84", 4326, 1, 35.9, 47.6, 0.0005);
+    run_case(dir, "utm", 32636, 0, 500000.0, 5260000.0, 60.0, 0);
+    run_case(dir, "wgs84", 4326, 1, 35.9, 47.6, 0.0005, 1);
 
     if (failures == 0)
         printf("PASS: 2-D and 3-D outputs keep values and georeferencing\n");
