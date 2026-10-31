@@ -7,6 +7,7 @@ Import this from any testsuite/test_ras3d_*.py test file:
         WYVERN_PATH, TANAGER_PATH, RAS3D_AVAILABLE,
         skip_without_ras3d, skip_without_wyvern, skip_without_tanager,
         open_cube_checked, assert_band_valid, load_addon,
+        make_wl_sidecar, remove_wl_sidecar,
     )
 """
 import os
@@ -137,8 +138,32 @@ def load_addon(addon, module_dir=None):
     return mod
 
 
+def remove_wl_sidecar(path):
+    """Remove a sidecar written by make_wl_sidecar(), tolerating absence.
+
+    The sidecar path is dictated by the contract under test -- the cube's
+    own path with the extension replaced by ``.wl.json`` -- so every suite
+    touching the same cube writes and deletes the *same* file. Two suites
+    running at once therefore race, and the loser used to fail with
+    FileNotFoundError on cleanup rather than on anything it was testing.
+    Cleanup is not the assertion, so missing is not an error here.
+
+    :param str path: the sidecar path returned by make_wl_sidecar()
+    """
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+
+
 def make_wl_sidecar(cube_path, n_bands, start_nm=400.0, step_nm=10.0):
-    """Write a synthetic .wl.json sidecar for a test cube."""
+    """Write a synthetic .wl.json sidecar for a test cube.
+
+    The path is fixed by the contract being tested, so it is shared by
+    every suite that uses the same cube. Pair this with
+    remove_wl_sidecar() rather than os.unlink(), and do not run two
+    cube-sharing suites concurrently.
+    """
     import json
     base = cube_path.removesuffix('.tiff').removesuffix('.tif')\
                     .removesuffix('.h5').removesuffix('.hdf5')
