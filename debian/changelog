@@ -1,3 +1,40 @@
+ras3d (0.1.5-1) trixie; urgency=medium
+
+  * GRASS shim: add grass.pygrass.raster.RasterRow and
+    grass.pygrass.raster.buffer.Buffer, and wire the pygrass submodules as
+    attributes of their parents. Modules importing RasterRow could not be
+    loaded in direct-file mode at all. RasterRow reads from the ras3d band
+    cache where the name is present and fails loudly otherwise, rather
+    than presenting an empty raster as a successful read; put_row() always
+    fails, pointing at ras3d_write instead.
+
+ -- Yann Chemin <dr.yann.chemin@gmail.com>  Sat, 31 Oct 2026 08:04:27 +0100
+
+ras3d (0.1.4-1) trixie; urgency=medium
+
+  * GRASS shim: add grass.script.mapcalc, grass.script.core and
+    grass.script.utils (with a working get_lib_path), so modules that
+    import them can be loaded in direct-file mode. mapcalc raises rather
+    than returning silently, because there is no raster algebra outside
+    GRASS and a no-op would leave an output map unwritten.
+  * GRASS shim: expose grass.script's submodules as attributes of the
+    parent as well as in sys.modules. "import grass.script.array as
+    garray" resolves getattr(grass.script, 'array') before it consults
+    sys.modules, so the attribute is what the import actually needs;
+    i.hyper.specresamp and i.hyper.indices could not be imported at all
+    without it.
+  * test_ras3d_common.py: add load_addon(), which imports an addon whose
+    filename contains dots via spec_from_file_location. The suites called
+    importlib.import_module('i_hyper_<x>') for files named
+    i.hyper.<x>.py, a name that can never resolve, so nine suites had
+    never imported their module.
+  * test_ras3d_common.py: resolve the shim from the source tree
+    (RAS3D_SHIM_DIR, default ~/dev/libras3d/python) instead of the
+    installed copy, which is root-owned and drifts behind the tree under
+    test.
+
+ -- Yann Chemin <dr.yann.chemin@gmail.com>  Sat, 31 Oct 2026 07:56:57 +0100
+
 ras3d (0.1.3-1) trixie; urgency=medium
 
   * Read band-separate GeoTIFFs (PlanarConfiguration=Separate with

@@ -14,6 +14,18 @@ import sys
 import pytest
 import numpy as np
 
+# Run against the libras3d *source* shim, not whatever .deb was last
+# installed: the system copy at /usr/lib/python3/dist-packages is root-owned
+# and only refreshed by rebuilding the package, so on a development machine
+# it drifts behind the tree under test. RAS3D_SHIM_DIR overrides, and an
+# empty value falls back to the installed copy.
+_SHIM_DIR = os.environ.get(
+    'RAS3D_SHIM_DIR',
+    os.path.join(os.path.expanduser('~'), 'dev', 'libras3d', 'python'),
+)
+if _SHIM_DIR and os.path.isdir(_SHIM_DIR) and _SHIM_DIR not in sys.path:
+    sys.path.insert(0, _SHIM_DIR)
+
 # ── data file paths ───────────────────────────────────────────────────────────
 
 WYVERN_PATH = os.environ.get(

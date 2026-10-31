@@ -448,6 +448,72 @@ class _FakeGrassArray:
             return len(self._data) if self._data is not None else 0
 
 
+class _FakeRasterRow:
+    """Stand-in for ``grass.pygrass.raster.RasterRow``.
+
+    pygrass talks to a GRASS mapset through the C library, which does not
+    exist in direct-file mode. This exists so modules that import
+    ``RasterRow`` can be loaded and their non-raster functions tested;
+    reading rows comes from the ras3d band cache when the name is there,
+    and anything else is a hard error rather than a silent empty raster.
+    """
+
+    def __init__(self, name, mode='r', mtype=None, overwrite=False, **kwargs):
+        self.name = name
+        self.mode = mode
+        self.mtype = mtype
+        self._rows = _ras3d_band_cache.get(name)
+
+    def open(self, *a, **kw):
+        if self.mode == 'r' and self._rows is None:
+            _fatal(f"RasterRow: <{self.name}> is not in the ras3d band cache "
+                   "and pygrass is unavailable outside GRASS")
+        return self
+
+    def close(self):
+        pass
+
+    def __enter__(self):
+        return self.open()
+
+    def __exit__(self, *exc):
+        self.close()
+        return False
+
+    def __iter__(self):
+        if self._rows is None:
+            _fatal(f"RasterRow: nothing to read for <{self.name}>")
+        for row in self._rows:
+            yield row
+
+    def __getitem__(self, idx):
+        if self._rows is None:
+            _fatal(f"RasterRow: nothing to read for <{self.name}>")
+        return self._rows[idx]
+
+    def __len__(self):
+        return 0 if self._rows is None else len(self._rows)
+
+    def put_row(self, row):
+        _fatal(f"RasterRow: cannot write <{self.name}> outside GRASS "
+               "(ras3d direct-file mode); use ras3d_write instead")
+
+
+def _buffer(shape, mtype=None, **kwargs):
+    """Stand-in for ``grass.pygrass.raster.buffer.Buffer`` — a numpy row."""
+    import numpy as _np
+
+    dtypes = {'CELL': _np.int32, 'FCELL': _np.float32, 'DCELL': _np.float64}
+    return _np.zeros(shape, dtype=dtypes.get(mtype, _np.float64))
+
+
+class _FakeGrassPyRaster:
+    """Minimal ``grass.pygrass.raster`` and its ``.buffer`` submodule."""
+    RasterRow = _FakeRasterRow
+    RasterRowIO = _FakeRasterRow
+    Buffer = staticmethod(_buffer)
+
+
 class _FakeGrassExceptions:
     class CalledModuleError(RuntimeError):
         pass
@@ -498,6 +564,14 @@ def install():
         setattr(sys.modules['grass'], 'script', script)
     except (AttributeError, TypeError):
         pass
+    pyraster = _FakeGrassPyRaster()
     sys.modules.setdefault('grass.pygrass',         pkg)
-    sys.modules.setdefault('grass.pygrass.raster',  pkg)
-    sys.modules.setdefault('grass.pygrass.raster.buffer', pkg)
+    sys.modules.setdefault('grass.pygrass.raster',  pyraster)
+    sys.modules.setdefault('grass.pygrass.raster.buffer', pyraster)
+    try:
+        setattr(sys.modules['grass'], 'pygrass', pkg)
+        setattr(pkg, 'pygrass', pkg)
+        setattr(pkg, 'raster', pyraster)
+        setattr(pyraster, 'buffer', pyraster)
+    except (AttributeError, TypeError):
+        pass
