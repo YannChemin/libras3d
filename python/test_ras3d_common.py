@@ -6,7 +6,7 @@ Import this from any testsuite/test_ras3d_*.py test file:
     from test_ras3d_common import (
         WYVERN_PATH, TANAGER_PATH, RAS3D_AVAILABLE,
         skip_without_ras3d, skip_without_wyvern, skip_without_tanager,
-        open_cube_checked, assert_band_valid,
+        open_cube_checked, assert_band_valid, load_addon,
     )
 """
 import os
@@ -79,6 +79,50 @@ def install_ras3d_shim():
     if 'GISBASE' not in os.environ:
         from ras3d_grass_shim import install
         install()
+
+
+def load_addon(addon, module_dir=None):
+    """Import an i.hyper.* addon whose filename contains dots.
+
+    ``i.hyper.albedo.py`` is not an importable module name, so
+    ``import_module('i_hyper_albedo')`` can never resolve it however
+    ``sys.path`` is set. Load it by file path instead and register it under
+    the underscored name, so dataclasses and pickling inside the module
+    resolve their own ``__module__``.
+
+    :param str addon: the addon's dotted name, e.g. ``i.hyper.albedo``
+    :param str module_dir: folder holding the ``.py``; defaults to
+        ``$HOME/dev/<addon>``, overridable with ``RAS3D_ADDON_DIR``
+    :return: the imported module
+    """
+    import importlib.util
+
+    underscored = addon.replace('.', '_')
+    if underscored in sys.modules:
+        return sys.modules[underscored]
+
+    if module_dir is None:
+        module_dir = os.environ.get(
+            'RAS3D_ADDON_DIR',
+            os.path.join(os.path.expanduser('~'), 'dev', addon),
+        )
+    path = os.path.join(module_dir, addon + '.py')
+    if not os.path.exists(path):
+        pytest.skip(f'Addon source not found: {path}')
+
+    install_ras3d_shim()
+    if module_dir not in sys.path:
+        sys.path.insert(0, module_dir)
+
+    spec = importlib.util.spec_from_file_location(underscored, path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[underscored] = mod
+    try:
+        spec.loader.exec_module(mod)
+    except Exception:
+        del sys.modules[underscored]
+        raise
+    return mod
 
 
 def make_wl_sidecar(cube_path, n_bands, start_nm=400.0, step_nm=10.0):
