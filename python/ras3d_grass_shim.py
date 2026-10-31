@@ -319,6 +319,74 @@ def _find_file(name, element='cell', mapset=''):
     return {'name': '', 'mapset': '', 'file': ''}
 
 
+def _mapcalc(exp, quiet=False, verbose=False, overwrite=False, **kwargs):
+    """Stand-in for ``grass.script.mapcalc``.
+
+    There is no raster algebra outside GRASS, so this exists to let modules
+    that merely *import* mapcalc be loaded in direct-file mode. Calling it
+    is a hard error rather than a silent no-op, because a module that
+    reaches here would otherwise carry on with an output map that was
+    never written.
+    """
+    _fatal("r.mapcalc is not available outside GRASS (ras3d direct-file "
+           f"mode); refusing to evaluate: {exp}")
+
+
+def _get_lib_path(modname, libname=None):
+    """Stand-in for ``grass.script.utils.get_lib_path``.
+
+    Looks where the addon libraries actually live on a developer machine:
+    ``$GRASS_ADDON_BASE/etc/<modname>``, then the i.hyper.import source
+    tree, then ``RAS3D_LIB_PATH``. Returns None when nothing matches, which
+    is what the real function does and what callers already handle.
+    """
+    candidates = []
+    base = os.environ.get('GRASS_ADDON_BASE')
+    if base:
+        candidates.append(os.path.join(base, 'etc', modname))
+    extra = os.environ.get('RAS3D_LIB_PATH')
+    if extra:
+        candidates.extend(extra.split(os.pathsep))
+    candidates.append(os.path.join(os.path.expanduser('~'), 'dev',
+                                   'i.hyper.import', modname))
+    for path in candidates:
+        if not path or not os.path.isdir(path):
+            continue
+        if libname is None or os.path.exists(
+                os.path.join(path, libname + '.py')):
+            return path
+    return None
+
+
+class _FakeGrassUtils:
+    """Minimal ``grass.script.utils``."""
+    get_lib_path = staticmethod(_get_lib_path)
+
+    @staticmethod
+    def decode(b, encoding='utf-8'):
+        return b.decode(encoding) if isinstance(b, bytes) else b
+
+    @staticmethod
+    def encode(s, encoding='utf-8'):
+        return s.encode(encoding) if isinstance(s, str) else s
+
+
+class _FakeGrassCore:
+    """Minimal ``grass.script.core`` — the names modules import from it."""
+    fatal         = staticmethod(_fatal)
+    warning       = staticmethod(_warning)
+    message       = staticmethod(_message)
+    verbose       = staticmethod(_verbose)
+    percent       = staticmethod(_percent)
+    parser        = staticmethod(_parser)
+    run_command   = staticmethod(_run_command)
+    read_command  = staticmethod(_read_command)
+    parse_command = staticmethod(_parse_command)
+    write_command = staticmethod(_write_command)
+    find_file     = staticmethod(_find_file)
+    mapcalc       = staticmethod(_mapcalc)
+
+
 # ── fake grass.script module ──────────────────────────────────────────────────
 
 class _FakeGrassScript:
@@ -335,6 +403,7 @@ class _FakeGrassScript:
     parse_command  = staticmethod(_parse_command)
     write_command  = staticmethod(_write_command)
     find_file      = staticmethod(_find_file)
+    mapcalc        = staticmethod(_mapcalc)
 
     # convenience aliases used by some modules
     @staticmethod
@@ -405,10 +474,30 @@ def get_band_cache():
 def install():
     """Insert fake grass.* modules into sys.modules."""
     pkg = _FakeGrassPackage()
+    script = _FakeGrassScript()
+    arr, utils, core = _FakeGrassArray(), _FakeGrassUtils(), _FakeGrassCore()
     sys.modules.setdefault('grass',                 pkg)
-    sys.modules.setdefault('grass.script',          _FakeGrassScript())
-    sys.modules.setdefault('grass.script.array',    _FakeGrassArray())
+    sys.modules.setdefault('grass.script',          script)
+    sys.modules.setdefault('grass.script.array',    arr)
+    sys.modules.setdefault('grass.script.utils',    utils)
+    sys.modules.setdefault('grass.script.core',     core)
     sys.modules.setdefault('grass.exceptions',      _FakeGrassExceptions())
+    # `import grass.script.array as garray` resolves getattr(grass.script,
+    # 'array') before it consults sys.modules, so the submodules have to be
+    # attributes of the parent too or the import fails even though
+    # sys.modules holds them.
+    script = sys.modules['grass.script']
+    for _name, _mod in (('array', 'grass.script.array'),
+                        ('utils', 'grass.script.utils'),
+                        ('core',  'grass.script.core')):
+        try:
+            setattr(script, _name, sys.modules[_mod])
+        except (AttributeError, TypeError):
+            pass
+    try:
+        setattr(sys.modules['grass'], 'script', script)
+    except (AttributeError, TypeError):
+        pass
     sys.modules.setdefault('grass.pygrass',         pkg)
     sys.modules.setdefault('grass.pygrass.raster',  pkg)
     sys.modules.setdefault('grass.pygrass.raster.buffer', pkg)
